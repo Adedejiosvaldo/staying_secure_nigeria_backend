@@ -70,9 +70,10 @@ func main() {
 	heartbeatHandler := handlers.NewHeartbeatHandler(cfg, postgres, redis, evaluator)
 	smsHandler := handlers.NewSMSHandler(cfg, postgres, redis, evaluator)
 	blackboxHandler := handlers.NewBlackboxHandler(cfg, postgres)
+	contactsHandler := handlers.NewContactsHandler(cfg, postgres)
 
 	// Setup Gin router
-	router := setupRouter(heartbeatHandler, smsHandler, blackboxHandler)
+	router := setupRouter(heartbeatHandler, smsHandler, blackboxHandler, contactsHandler)
 
 	// Start server
 	srv := &http.Server{
@@ -108,6 +109,7 @@ func setupRouter(
 	heartbeatHandler *handlers.HeartbeatHandler,
 	smsHandler *handlers.SMSHandler,
 	blackboxHandler *handlers.BlackboxHandler,
+	contactsHandler *handlers.ContactsHandler,
 ) *gin.Engine {
 	router := gin.Default()
 
@@ -134,6 +136,12 @@ func setupRouter(
 		// Blackbox endpoints
 		v1.POST("/blackbox/upload", blackboxHandler.UploadTrail)
 		v1.GET("/blackbox/trails/:user_id", blackboxHandler.GetUserTrails)
+
+		// Contact management endpoints
+		v1.GET("/user/:id/contacts", contactsHandler.GetContacts)
+		v1.POST("/user/:id/contacts", contactsHandler.AddContact)
+		v1.PUT("/user/:id/contacts/:contactId", contactsHandler.UpdateContact)
+		v1.DELETE("/user/:id/contacts/:contactId", contactsHandler.DeleteContact)
 	}
 
 	return router

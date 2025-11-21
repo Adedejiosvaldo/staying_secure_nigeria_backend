@@ -2,13 +2,14 @@ package database
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/adedejiosvaldo/safetrace/backend/internal/models"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/adedejiosvaldo/safetrace/backend/internal/models"
 )
 
 type PostgresDB struct {
@@ -292,4 +293,108 @@ func (db *PostgresDB) GetBlackboxTrails(ctx context.Context, userID uuid.UUID, l
 		trails = append(trails, trail)
 	}
 	return trails, nil
+}
+
+// Contact management operations
+func (db *PostgresDB) AddContact(ctx context.Context, userID uuid.UUID, contact map[string]string) error {
+	// Convert map to Contact struct
+	newContact := models.Contact{
+		ID:    contact["id"],
+		Name:  contact["name"],
+		Phone: contact["phone"],
+	}
+
+	query := `
+		UPDATE users
+		SET trusted_contacts = trusted_contacts || $1::jsonb,
+			updated_at = NOW()
+		WHERE id = $2
+	`
+	contactJSON, err := json.Marshal([]models.Contact{newContact})
+	if err != nil {
+		return err
+	}
+
+	_, err = db.pool.Exec(ctx, query, contactJSON, userID)
+	return err
+}
+
+func (db *PostgresDB) UpdateContact(ctx context.Context, userID uuid.UUID, contactID string, updates map[string]string) error {
+	// Get current contacts
+	user, err := db.GetUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	// Update the contact in the array
+	updated := false
+	for i, contact := range user.TrustedContacts {
+		if contact.ID == contactID {
+			if name, ok := updates["name"]; ok && name != "" {
+				user.TrustedContacts[i].Name = name
+			}
+			if phone, ok := updates["phone"]; ok && phone != "" {
+				user.TrustedContacts[i].Phone = phone
+			}
+			updated = true
+			break
+		}
+	}
+
+	if !updated {
+		return fmt.Errorf("contact not found")
+	}
+
+	// Save back to database
+	contactsJSON, err := json.Marshal(user.TrustedContacts)
+	if err != nil {
+		return err
+	}
+
+	query := `
+		UPDATE users
+		SET trusted_contacts = $1::jsonb,
+			updated_at = NOW()
+		WHERE id = $2
+	`
+	_, err = db.pool.Exec(ctx, query, contactsJSON, userID)
+	return err
+}
+
+func (db *PostgresDB) DeleteContact(ctx context.Context, userID uuid.UUID, contactID string) error {
+	// Get current contacts
+	user, err := db.GetUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	// Filter out the contact to delete
+	newContacts := make([]models.Contact, 0)
+	found := false
+	for _, contact := range user.TrustedContacts {
+		if contact.ID != contactID {
+			newContacts = append(newContacts, contact)
+		} else {
+			found = true
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("contact not found")
+	}
+
+	// Save back to database
+	contactsJSON, err := json.Marshal(newContacts)
+	if err != nil {
+		return err
+	}
+
+	query := `
+		UPDATE users
+		SET trusted_contacts = $1::jsonb,
+			updated_at = NOW()
+		WHERE id = $2
+	`
+	_, err = db.pool.Exec(ctx, query, contactsJSON, userID)
+	return err
 }

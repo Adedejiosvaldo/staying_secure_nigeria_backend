@@ -21,6 +21,7 @@ type User struct {
 
 // Contact represents a trusted contact
 type Contact struct {
+	ID    string `json:"id"`
 	Name  string `json:"name"`
 	Phone string `json:"phone"`
 }

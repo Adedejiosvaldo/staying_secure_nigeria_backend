@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -38,21 +39,36 @@ type BlackboxUploadRequest struct {
 func (h *BlackboxHandler) UploadTrail(c *gin.Context) {
 	var req BlackboxUploadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		log.Printf("ERROR: Failed to bind JSON in blackbox upload: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "invalid request",
+			"details": err.Error(),
+		})
 		return
 	}
+	
+	log.Printf("INFO: Blackbox upload request: UserID=%s, DataPoints=%d, StartTs=%v, EndTs=%v", 
+		req.UserID, len(req.DataPoints), req.StartTs, req.EndTs)
 
 	// Parse user ID
 	userID, err := uuid.Parse(req.UserID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user_id"})
+		log.Printf("ERROR: Failed to parse user_id '%s': %v", req.UserID, err)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "invalid user_id",
+			"details": err.Error(),
+		})
 		return
 	}
 
 	// Verify user exists
 	user, err := h.postgres.GetUserByID(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
+		log.Printf("ERROR: Failed to get user %s: %v", userID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "database error",
+			"details": err.Error(),
+		})
 		return
 	}
 	if user == nil {
@@ -63,7 +79,11 @@ func (h *BlackboxHandler) UploadTrail(c *gin.Context) {
 	// Convert data points to JSON string (in production, store in S3/Spaces)
 	dataJSON, err := json.Marshal(req.DataPoints)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to serialize data"})
+		log.Printf("ERROR: Failed to marshal data points for user %s: %v", userID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to serialize data",
+			"details": err.Error(),
+		})
 		return
 	}
 
@@ -82,7 +102,14 @@ func (h *BlackboxHandler) UploadTrail(c *gin.Context) {
 	}
 
 	if err := h.postgres.CreateBlackboxTrail(c.Request.Context(), trail); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store trail"})
+		log.Printf("ERROR: Failed to create blackbox trail for user %s: %v", userID, err)
+		log.Printf("Trail details: ID=%s, DataPoints=%d, StartTs=%v, EndTs=%v", 
+			trail.ID, trail.DataPoints, trail.StartTs, trail.EndTs)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to store trail",
+			"details": err.Error(),
+			"trail_id": trail.ID.String(),
+		})
 		return
 	}
 
@@ -104,7 +131,11 @@ func (h *BlackboxHandler) GetUserTrails(c *gin.Context) {
 
 	trails, err := h.postgres.GetBlackboxTrails(c.Request.Context(), userID, 10)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get trails"})
+		log.Printf("ERROR: Failed to get blackbox trails for user %s: %v", userID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to get trails",
+			"details": err.Error(),
+		})
 		return
 	}
 

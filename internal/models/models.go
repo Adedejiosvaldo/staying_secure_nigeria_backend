@@ -21,9 +21,10 @@ type User struct {
 
 // Contact represents a trusted contact
 type Contact struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Phone string `json:"phone"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Phone        string `json:"phone"`
+	Relationship string `json:"relationship,omitempty"`
 }
 
 // TrustedContacts is a slice of contacts stored as JSONB
@@ -47,11 +48,21 @@ func (t *TrustedContacts) Scan(value interface{}) error {
 
 // UserSettings represents user preferences
 type UserSettings struct {
-	HeartbeatInterval   int  `json:"heartbeat_interval"`    // seconds
-	SilentPromptTimeout int  `json:"silent_prompt_timeout"` // seconds
-	AutoEscalatePolice  bool `json:"auto_escalate_police"`
-	ShareAudio          bool `json:"share_audio"`
+	HeartbeatInterval   int    `json:"heartbeat_interval"`    // seconds
+	SilentPromptTimeout int    `json:"silent_prompt_timeout"` // seconds
+	AutoEscalatePolice  bool   `json:"auto_escalate_police"`
+	ShareAudio          bool   `json:"share_audio"`
 	PanicGesture        string `json:"panic_gesture"` // "power_button_3x" | "shake"
+	
+	// Tactical feature settings
+	ImpactDetection   bool   `json:"impact_detection_enabled"`
+	FreefallDetection bool   `json:"freefall_detection_enabled"`
+	ShakeDetection    bool   `json:"shake_detection_enabled"`
+	AlertCountdown    int    `json:"alert_countdown_seconds"`
+	SmsFallback       bool   `json:"sms_fallback_enabled"`
+	FallbackSmsNumber string `json:"fallback_sms_number"`
+	WifiOnlyUploads   bool   `json:"wifi_only_uploads"`
+	TrailRetention    int    `json:"trail_retention_hours"`
 }
 
 func (s UserSettings) Value() (driver.Value, error) {
@@ -66,6 +77,14 @@ func (s *UserSettings) Scan(value interface{}) error {
 			AutoEscalatePolice:  false,
 			ShareAudio:          false,
 			PanicGesture:        "power_button_3x",
+			ImpactDetection:     true,
+			FreefallDetection:   true,
+			ShakeDetection:      false,
+			AlertCountdown:      60,
+			SmsFallback:         true,
+			FallbackSmsNumber:   "",
+			WifiOnlyUploads:     false,
+			TrailRetention:      48,
 		}
 		return nil
 	}

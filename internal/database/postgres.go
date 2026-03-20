@@ -297,6 +297,12 @@ func (db *PostgresDB) GetBlackboxTrails(ctx context.Context, userID uuid.UUID, l
 
 // Contact management operations
 func (db *PostgresDB) AddContact(ctx context.Context, userID uuid.UUID, contact map[string]string) error {
+	// Get current user to append to existing contacts
+	user, err := db.GetUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+
 	// Convert map to Contact struct
 	newContact := models.Contact{
 		ID:    contact["id"],
@@ -304,18 +310,22 @@ func (db *PostgresDB) AddContact(ctx context.Context, userID uuid.UUID, contact 
 		Phone: contact["phone"],
 	}
 
-	query := `
-		UPDATE users
-		SET trusted_contacts = trusted_contacts || $1::jsonb,
-			updated_at = NOW()
-		WHERE id = $2
-	`
-	contactJSON, err := json.Marshal([]models.Contact{newContact})
+	// Append new contact to existing contacts
+	allContacts := append(user.TrustedContacts, newContact)
+
+	// Save back to database
+	contactsJSON, err := json.Marshal(allContacts)
 	if err != nil {
 		return err
 	}
 
-	_, err = db.pool.Exec(ctx, query, contactJSON, userID)
+	query := `
+		UPDATE users
+		SET trusted_contacts = $1::jsonb,
+			updated_at = NOW()
+		WHERE id = $2
+	`
+	_, err = db.pool.Exec(ctx, query, contactsJSON, userID)
 	return err
 }
 
@@ -397,4 +407,31 @@ func (db *PostgresDB) DeleteContact(ctx context.Context, userID uuid.UUID, conta
 	`
 	_, err = db.pool.Exec(ctx, query, contactsJSON, userID)
 	return err
+}
+
+// PurgeUserData deletes all history and telemetry for a user without deleting their account
+func (db *PostgresDB) PurgeUserData(ctx context.Context, userID uuid.UUID) error {
+	tx, err := db.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	queries := []string{
+		`DELETE FROM trips WHERE user_id = $1`,
+		`DELETE FROM timers WHERE user_id = $1`,
+		`DELETE FROM incidents WHERE user_id = $1`,
+		`DELETE FROM heartbeats WHERE user_id = $1`,
+		`DELETE FROM last_gasps WHERE user_id = $1`,
+		`DELETE FROM alerts WHERE user_id = $1`,
+		`DELETE FROM blackbox_trails WHERE user_id = $1`,
+	}
+
+	for _, q := range queries {
+		if _, err := tx.Exec(ctx, q, userID); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit(ctx)
 }

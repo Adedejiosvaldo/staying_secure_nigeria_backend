@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -14,10 +16,11 @@ import (
 )
 
 type HeartbeatHandler struct {
-	cfg       *config.Config
-	postgres  *database.PostgresDB
-	redis     *database.RedisDB
-	evaluator *services.SafetyEvaluator
+	cfg        *config.Config
+	postgres   *database.PostgresDB
+	redis      *database.RedisDB
+	evaluator  *services.SafetyEvaluator
+	alertEngine *services.AlertEngine
 }
 
 func NewHeartbeatHandler(
@@ -25,12 +28,14 @@ func NewHeartbeatHandler(
 	postgres *database.PostgresDB,
 	redis *database.RedisDB,
 	evaluator *services.SafetyEvaluator,
+	alertEngine *services.AlertEngine,
 ) *HeartbeatHandler {
 	return &HeartbeatHandler{
-		cfg:       cfg,
-		postgres:  postgres,
-		redis:     redis,
-		evaluator: evaluator,
+		cfg:        cfg,
+		postgres:   postgres,
+		redis:      redis,
+		evaluator:  evaluator,
+		alertEngine: alertEngine,
 	}
 }
 
@@ -62,15 +67,17 @@ func (h *HeartbeatHandler) CreateHeartbeat(c *gin.Context) {
 		return
 	}
 
-	// Rate limiting check
-	allowed, err := h.redis.CheckRateLimit(c.Request.Context(), userID, 30*time.Second, 1)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "rate limit check failed"})
-		return
-	}
-	if !allowed {
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded"})
-		return
+	// Rate limiting check (bypass for LastGasp emergencies)
+	if !req.LastGasp {
+		allowed, err := h.redis.CheckRateLimit(c.Request.Context(), userID, 30*time.Second, 1)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "rate limit check failed"})
+			return
+		}
+		if !allowed {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded"})
+			return
+		}
 	}
 
 	// Verify user exists
@@ -125,7 +132,7 @@ func (h *HeartbeatHandler) CreateHeartbeat(c *gin.Context) {
 		return
 	}
 
-	// Handle LastGasp
+	// Handle LastGasp - send SMS immediately
 	if req.LastGasp {
 		lastGasp := &models.LastGasp{
 			ID:        uuid.New(),
@@ -140,6 +147,15 @@ func (h *HeartbeatHandler) CreateHeartbeat(c *gin.Context) {
 		if err := h.postgres.CreateLastGasp(c.Request.Context(), lastGasp); err != nil {
 			// Log error but don't fail the request
 		}
+
+		// Send SMS immediately to all trusted contacts (don't wait for evaluation)
+		go func() {
+			ctx := c.Copy().Request.Context()
+			if err := h.alertEngine.SendAlertToContacts(ctx, user, heartbeat, 100, "LastGasp emergency - user requested help"); err != nil {
+				// Log error (in production, use proper logging)
+				fmt.Printf("Failed to send LastGasp alerts: %v\n", err)
+			}
+		}()
 	}
 
 	// Trigger safety evaluation (async)
@@ -202,3 +218,51 @@ func (h *HeartbeatHandler) ResolveAlert(c *gin.Context) {
 		"message": "alert resolved",
 	})
 }
+
+type TriggerAlertRequest struct {
+	UserID        string  `json:"user_id" binding:"required"`
+	TriggerReason string  `json:"trigger_reason" binding:"required"`
+	Lat           float64 `json:"lat" binding:"required"`
+	Lng           float64 `json:"lng" binding:"required"`
+}
+
+// POST /v1/alerts/trigger
+func (h *HeartbeatHandler) TriggerAlert(c *gin.Context) {
+	var req TriggerAlertRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID, err := uuid.Parse(req.UserID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user_id"})
+		return
+	}
+
+	user, err := h.postgres.GetUserByID(c.Request.Context(), userID)
+	if err != nil || user == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+
+	hb := &models.Heartbeat{
+		UserID:    user.ID,
+		Lat:       req.Lat,
+		Lng:       req.Lng,
+		Timestamp: time.Now(),
+		AccuracyM: 10,
+	}
+
+	// Trigger SOS
+	go func() {
+		ctx := context.Background()
+		h.alertEngine.SendAlertToContacts(ctx, user, hb, 100, req.TriggerReason)
+	}()
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"message": "alert triggered successfully",
+	})
+}
+

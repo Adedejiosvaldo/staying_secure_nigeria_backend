@@ -26,13 +26,15 @@ func NewContactsHandler(
 }
 
 type AddContactRequest struct {
-	Name  string `json:"name" binding:"required"`
-	Phone string `json:"phone" binding:"required"`
+	Name         string `json:"name" binding:"required"`
+	Phone        string `json:"phone" binding:"required"`
+	Relationship string `json:"relationship"`
 }
 
 type UpdateContactRequest struct {
-	Name  string `json:"name"`
-	Phone string `json:"phone"`
+	Name         string `json:"name"`
+	Phone        string `json:"phone"`
+	Relationship string `json:"relationship"`
 }
 
 // GET /v1/user/:id/contacts
@@ -98,9 +100,10 @@ func (h *ContactsHandler) AddContact(c *gin.Context) {
 	log.Printf("INFO: Adding contact for user %s: name=%s, phone=%s", userID, req.Name, req.Phone)
 
 	contact := map[string]string{
-		"id":    uuid.New().String(),
-		"name":  req.Name,
-		"phone": req.Phone,
+		"id":           uuid.New().String(),
+		"name":         req.Name,
+		"phone":        req.Phone,
+		"relationship": req.Relationship,
 	}
 
 	if err := h.postgres.AddContact(c.Request.Context(), userID, contact); err != nil {
@@ -155,6 +158,9 @@ func (h *ContactsHandler) UpdateContact(c *gin.Context) {
 	if req.Phone != "" {
 		updates["phone"] = req.Phone
 	}
+	if req.Relationship != "" {
+		updates["relationship"] = req.Relationship
+	}
 
 	if err := h.postgres.UpdateContact(c.Request.Context(), userID, contactID, updates); err != nil {
 		log.Printf("ERROR: Failed to update contact: %v", err)
@@ -200,5 +206,26 @@ func (h *ContactsHandler) DeleteContact(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
 		"message": "contact deleted successfully",
+	})
+}
+
+// GET /v1/users/search
+func (h *ContactsHandler) SearchUsers(c *gin.Context) {
+	query := c.Query("q")
+	if query == "" {
+		c.JSON(http.StatusOK, gin.H{"users": []map[string]string{}})
+		return
+	}
+
+	// This is a minimal stub for exact phone lookup or partial name search
+	// In a complete implementation this would call h.postgres.SearchUsersByQuery(ctx, query)
+	c.JSON(http.StatusOK, gin.H{
+		"users": []map[string]interface{}{
+			{
+				"id":    "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+				"name":  "Jane Doe",
+				"phone": "+2348000000001",
+			},
+		},
 	})
 }

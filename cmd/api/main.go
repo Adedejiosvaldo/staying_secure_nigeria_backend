@@ -64,16 +64,30 @@ func main() {
 	// Initialize services
 	alertEngine := services.NewAlertEngine(cfg, fcmClient)
 	evaluator := services.NewSafetyEvaluator(cfg, postgres, redis, alertEngine)
+	
+	tripService := services.NewTripService(postgres)
+	timerService := services.NewTimerService(postgres, alertEngine)
+	incidentService := services.NewIncidentService(postgres)
+	settingsService := services.NewSettingsService(postgres)
+	
 	log.Println("✓ Services initialized")
 
 	// Initialize handlers
-	heartbeatHandler := handlers.NewHeartbeatHandler(cfg, postgres, redis, evaluator)
+	heartbeatHandler := handlers.NewHeartbeatHandler(cfg, postgres, redis, evaluator, alertEngine)
 	smsHandler := handlers.NewSMSHandler(cfg, postgres, redis, evaluator)
 	blackboxHandler := handlers.NewBlackboxHandler(cfg, postgres)
 	contactsHandler := handlers.NewContactsHandler(cfg, postgres)
+	
+	tripHandler := handlers.NewTripHandler(tripService)
+	timerHandler := handlers.NewTimerHandler(timerService)
+	incidentHandler := handlers.NewIncidentHandler(incidentService)
+	settingsHandler := handlers.NewSettingsHandler(settingsService)
 
 	// Setup Gin router
-	router := setupRouter(heartbeatHandler, smsHandler, blackboxHandler, contactsHandler)
+	router := setupRouter(
+		heartbeatHandler, smsHandler, blackboxHandler, contactsHandler,
+		tripHandler, timerHandler, incidentHandler, settingsHandler,
+	)
 
 	// Start server
 	srv := &http.Server{
@@ -110,6 +124,10 @@ func setupRouter(
 	smsHandler *handlers.SMSHandler,
 	blackboxHandler *handlers.BlackboxHandler,
 	contactsHandler *handlers.ContactsHandler,
+	tripHandler *handlers.TripHandler,
+	timerHandler *handlers.TimerHandler,
+	incidentHandler *handlers.IncidentHandler,
+	settingsHandler *handlers.SettingsHandler,
 ) *gin.Engine {
 	router := gin.Default()
 
@@ -125,9 +143,10 @@ func setupRouter(
 	// API v1 routes
 	v1 := router.Group("/v1")
 	{
-		// Heartbeat endpoints
+		// Heartbeat & Alerts endpoints
 		v1.POST("/heartbeat", heartbeatHandler.CreateHeartbeat)
 		v1.GET("/user/:id/status", heartbeatHandler.GetUserStatus)
+		v1.POST("/alert/trigger", heartbeatHandler.TriggerAlert)
 		v1.POST("/alert/:id/resolve", heartbeatHandler.ResolveAlert)
 
 		// SMS webhook
@@ -138,10 +157,29 @@ func setupRouter(
 		v1.GET("/blackbox/trails/:user_id", blackboxHandler.GetUserTrails)
 
 		// Contact management endpoints
+		v1.GET("/users/search", contactsHandler.SearchUsers)
 		v1.GET("/user/:id/contacts", contactsHandler.GetContacts)
 		v1.POST("/user/:id/contacts", contactsHandler.AddContact)
 		v1.PUT("/user/:id/contacts/:contactId", contactsHandler.UpdateContact)
 		v1.DELETE("/user/:id/contacts/:contactId", contactsHandler.DeleteContact)
+
+		// Live Trip endpoints
+		v1.POST("/trips/start", tripHandler.StartTrip)
+		v1.POST("/trips/:id/location", tripHandler.StreamLocation)
+		v1.POST("/trips/:id/end", tripHandler.EndTrip)
+		v1.GET("/trips/:id/guardians", tripHandler.GetGuardians)
+
+		// Timer endpoints
+		v1.POST("/timers/start", timerHandler.StartTimer)
+		v1.POST("/timers/:id/extend", timerHandler.ExtendTimer)
+		v1.POST("/timers/:id/safe", timerHandler.MarkSafe)
+
+		// Incidents
+		v1.POST("/incidents/report", incidentHandler.ReportIncident)
+
+		// Settings & Data
+		v1.PUT("/user/:id/settings", settingsHandler.UpdateSettings)
+		v1.DELETE("/user/:id/data", settingsHandler.DeleteData)
 	}
 
 	return router
